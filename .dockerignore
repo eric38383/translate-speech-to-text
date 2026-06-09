@@ -1,0 +1,9 @@
+*.json
+__pycache__
+*.pyc
+.git
+.gitignore
+README.md
+.DS_Store
+credentials/
+*.key

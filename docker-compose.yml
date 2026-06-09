@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  translate:
+    build: .
+    container_name: translate-transcripts
+    volumes:
+      # Mount the entire project directory
+      - .:/app
+    environment:
+      # Point to credentials file in project root
+      - GOOGLE_APPLICATION_CREDENTIALS=/app/gcp-credentials.json
+    stdin_open: true
+    tty: true
+    command: /bin/bash
