@@ -7,9 +7,8 @@ translate Spanish transcriptions to English, and save back to GCS.
 import json
 import os
 import argparse
-import html
 from google.cloud import storage
-from google.cloud import translate_v2 as translate
+from google.cloud import translate_v3
 
 
 def extract_transcript_from_json(json_data):
@@ -34,24 +33,37 @@ def extract_transcript_from_json(json_data):
     return ' '.join(transcript_parts).strip()
 
 
-def translate_text_chunked(text, target_language='en', source_language='es', chunk_size=5000):
+def translate_text_chunked(text, target_language='en', source_language='es',
+                          chunk_size=5000, project_id=None):
     """
-    Translate text in chunks to handle large transcriptions.
-    Google Translate API has size limits, so we process in chunks.
-    """
-    translate_client = translate.Client()
+    Translate text in chunks using Translation API v3.
 
-    # Split text into chunks (by characters to avoid exceeding API limits)
+    Args:
+        text: Text to translate
+        target_language: Target language code (default: 'en')
+        source_language: Source language code (default: 'es')
+        chunk_size: Maximum chunk size in characters
+        project_id: GCP project ID (required for v3 API)
+    """
+    if not project_id:
+        raise ValueError("project_id is required for Translation API v3")
+
+    client = translate_v3.TranslationServiceClient()
+    location = "global"
+    parent = f"projects/{project_id}/locations/{location}"
+
+    # v3 can handle larger chunks (up to 30k codepoints)
+    max_chunk = min(chunk_size, 25000)
+
+    # Split text into chunks
     chunks = []
     current_chunk = []
     current_length = 0
-
-    # Split by sentences/words to avoid breaking mid-sentence
     words = text.split()
 
     for word in words:
-        word_length = len(word) + 1  # +1 for space
-        if current_length + word_length > chunk_size and current_chunk:
+        word_length = len(word) + 1
+        if current_length + word_length > max_chunk and current_chunk:
             chunks.append(' '.join(current_chunk))
             current_chunk = [word]
             current_length = word_length
@@ -66,21 +78,25 @@ def translate_text_chunked(text, target_language='en', source_language='es', chu
     translated_chunks = []
     for i, chunk in enumerate(chunks):
         print(f"  Translating chunk {i+1}/{len(chunks)} ({len(chunk)} chars)...")
-        result = translate_client.translate(
-            chunk,
-            source_language=source_language,
-            target_language=target_language
+
+        response = client.translate_text(
+            request={
+                "parent": parent,
+                "contents": [chunk],
+                "mime_type": "text/plain",
+                "source_language_code": source_language,
+                "target_language_code": target_language,
+            }
         )
-        # Unescape HTML entities (e.g., &quot; -> ", &amp; -> &)
-        decoded_text = html.unescape(result['translatedText'])
-        translated_chunks.append(decoded_text)
+
+        translated_chunks.append(response.translations[0].translated_text)
 
     return ' '.join(translated_chunks)
 
 
-def process_file(bucket_name, input_blob_path, output_prefix='translated'):
+def process_file(bucket_name, input_blob_path, output_prefix='translated', project_id=None):
     """
-    Process a single JSON file: extract transcript, translate, and save.
+    Process a single JSON file: extract transcript, translate, and save both Spanish and English.
     """
     print(f"\nProcessing: gs://{bucket_name}/{input_blob_path}")
 
@@ -114,9 +130,9 @@ def process_file(bucket_name, input_blob_path, output_prefix='translated'):
     spanish_blob = bucket.blob(spanish_output_path)
     spanish_blob.upload_from_string(spanish_text, content_type='text/plain; charset=utf-8')
 
-    # Translate to English
+    # Translate to English using v3 API
     print("  Translating Spanish to English...")
-    english_text = translate_text_chunked(spanish_text)
+    english_text = translate_text_chunked(spanish_text, project_id=project_id)
 
     # Save English translation
     print(f"  Saving English translation to: gs://{bucket_name}/{english_output_path}")
@@ -127,7 +143,8 @@ def process_file(bucket_name, input_blob_path, output_prefix='translated'):
     return spanish_output_path, english_output_path
 
 
-def process_bucket(bucket_name, input_prefix='', output_prefix='translated', file_pattern='*.json'):
+def process_bucket(bucket_name, input_prefix='', output_prefix='translated',
+                   file_pattern='*.json', project_id=None):
     """
     Process all JSON files in a GCS bucket/prefix.
     """
@@ -147,7 +164,7 @@ def process_bucket(bucket_name, input_prefix='', output_prefix='translated', fil
 
     for json_file in json_files:
         try:
-            process_file(bucket_name, json_file, output_prefix)
+            process_file(bucket_name, json_file, output_prefix, project_id)
         except Exception as e:
             print(f"ERROR processing {json_file}: {str(e)}")
             continue
@@ -155,7 +172,7 @@ def process_bucket(bucket_name, input_prefix='', output_prefix='translated', fil
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Translate Google Speech-to-Text transcriptions from Spanish to English'
+        description='Translate Google Speech-to-Text transcriptions from Spanish to English using Translation API v3'
     )
     parser.add_argument(
         '--bucket',
@@ -176,19 +193,25 @@ def main():
         '--file',
         help='Process a single file instead of all files in prefix'
     )
+    parser.add_argument(
+        '--project-id',
+        required=True,
+        help='GCP Project ID (required for Translation API v3)'
+    )
 
     args = parser.parse_args()
 
     print("=" * 60)
-    print("Google Speech-to-Text Translation Tool")
+    print("Google Speech-to-Text Translation Tool (v3 API)")
     print("=" * 60)
 
     if args.file:
         # Process single file
-        process_file(args.bucket, args.file, args.output_prefix)
+        process_file(args.bucket, args.file, args.output_prefix, args.project_id)
     else:
         # Process all files in prefix
-        process_bucket(args.bucket, args.input_prefix, args.output_prefix)
+        process_bucket(args.bucket, args.input_prefix, args.output_prefix,
+                      project_id=args.project_id)
 
     print("\n" + "=" * 60)
     print("All processing complete!")
