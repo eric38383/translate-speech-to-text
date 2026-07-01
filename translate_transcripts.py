@@ -96,7 +96,8 @@ def translate_text_chunked(text, target_language='en', source_language='es',
 
 def process_file(bucket_name, input_blob_path, output_prefix='translated', project_id=None):
     """
-    Process a single JSON file: extract transcript, translate, and save both Spanish and English.
+    Process a single JSON file: extract transcript, translate, and save to separate Spanish and English directories.
+    Spanish files are saved to {output_prefix}/spanish/, English files to {output_prefix}/english/.
     """
     print(f"\nProcessing: gs://{bucket_name}/{input_blob_path}")
 
@@ -120,10 +121,10 @@ def process_file(bucket_name, input_blob_path, output_prefix='translated', proje
 
     print(f"  Extracted {len(spanish_text)} characters")
 
-    # Generate output paths
+    # Generate output paths with separate directories
     base_name = os.path.splitext(os.path.basename(input_blob_path))[0]
-    spanish_output_path = f"{output_prefix}/{base_name}_spanish.txt"
-    english_output_path = f"{output_prefix}/{base_name}_english.txt"
+    spanish_output_path = f"{output_prefix}/spanish/{base_name}.txt"
+    english_output_path = f"{output_prefix}/english/{base_name}.txt"
 
     # Save original Spanish transcript
     print(f"  Saving Spanish transcript to: gs://{bucket_name}/{spanish_output_path}")
@@ -187,7 +188,7 @@ def main():
     parser.add_argument(
         '--output-prefix',
         default='translated',
-        help='Prefix/folder path for output text files (default: "translated")'
+        help='Prefix/folder path for output text files. Files will be saved to {prefix}/spanish/ and {prefix}/english/ (default: "translated")'
     )
     parser.add_argument(
         '--file',
