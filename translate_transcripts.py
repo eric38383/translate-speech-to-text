@@ -94,7 +94,7 @@ def translate_text_chunked(text, target_language='en', source_language='es',
     return ' '.join(translated_chunks)
 
 
-def process_file(bucket_name, input_blob_path, output_prefix='translated', project_id=None):
+def process_file(bucket_name, input_blob_path, output_prefix='translated', project_id=None, original_language_only=False):
     """
     Process a single JSON file: extract transcript, translate, and save to separate Spanish and English directories.
     Spanish files are saved to {output_prefix}/spanish/, English files to {output_prefix}/english/.
@@ -124,14 +124,18 @@ def process_file(bucket_name, input_blob_path, output_prefix='translated', proje
     # Generate output paths with separate directories
     base_name = os.path.splitext(os.path.basename(input_blob_path))[0]
     spanish_output_path = f"{output_prefix}/spanish/{base_name}.txt"
-    english_output_path = f"{output_prefix}/english/{base_name}.txt"
 
     # Save original Spanish transcript
     print(f"  Saving Spanish transcript to: gs://{bucket_name}/{spanish_output_path}")
     spanish_blob = bucket.blob(spanish_output_path)
     spanish_blob.upload_from_string(spanish_text, content_type='text/plain; charset=utf-8')
 
+    if original_language_only:
+        print("  ✓ Processing complete (original language only)!")
+        return spanish_output_path, None
+
     # Translate to English using v3 API
+    english_output_path = f"{output_prefix}/english/{base_name}.txt"
     print("  Translating Spanish to English...")
     english_text = translate_text_chunked(spanish_text, project_id=project_id)
 
@@ -145,7 +149,7 @@ def process_file(bucket_name, input_blob_path, output_prefix='translated', proje
 
 
 def process_bucket(bucket_name, input_prefix='', output_prefix='translated',
-                   file_pattern='*.json', project_id=None):
+                   file_pattern='*.json', project_id=None, original_language_only=False):
     """
     Process all JSON files in a GCS bucket/prefix.
     """
@@ -165,7 +169,7 @@ def process_bucket(bucket_name, input_prefix='', output_prefix='translated',
 
     for json_file in json_files:
         try:
-            process_file(bucket_name, json_file, output_prefix, project_id)
+            process_file(bucket_name, json_file, output_prefix, project_id, original_language_only)
         except Exception as e:
             print(f"ERROR processing {json_file}: {str(e)}")
             continue
@@ -199,6 +203,11 @@ def main():
         required=True,
         help='GCP Project ID (required for Translation API v3)'
     )
+    parser.add_argument(
+        '--original-language-only',
+        action='store_true',
+        help='Only upload original language transcripts, skip translation'
+    )
 
     args = parser.parse_args()
 
@@ -208,11 +217,11 @@ def main():
 
     if args.file:
         # Process single file
-        process_file(args.bucket, args.file, args.output_prefix, args.project_id)
+        process_file(args.bucket, args.file, args.output_prefix, args.project_id, args.original_language_only)
     else:
         # Process all files in prefix
         process_bucket(args.bucket, args.input_prefix, args.output_prefix,
-                      project_id=args.project_id)
+                      project_id=args.project_id, original_language_only=args.original_language_only)
 
     print("\n" + "=" * 60)
     print("All processing complete!")
